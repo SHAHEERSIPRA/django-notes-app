@@ -69,7 +69,7 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ steps.vars.outputs.IMAGE_TAG }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          APP_DIR: ${{ secrets.APP_DIR }}
+          APP_DIR: ${{ secrets.EC2_APP_DIR }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
