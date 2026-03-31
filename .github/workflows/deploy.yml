@@ -1,4 +1,4 @@
-name: Deploy Django Notes App to EC2 via ECR
+name: Deploy to EC2 via ECR
 
 on:
   push:
@@ -18,11 +18,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout repo
       - name: Checkout source
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -30,36 +28,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # 3️⃣ Set Docker image tag
-      - name: Set IMAGE_TAG
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
         id: vars
         run: echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_OUTPUT
 
-      # 4️⃣ Build and push Docker image to ECR
-      - name: Build and push Docker image
+      - name: Build and push app image
         env:
           ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ steps.vars.outputs.IMAGE_TAG }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
-          # Convert repository name to lowercase
-          REPO=$(echo $ECR_REPOSITORY | tr '[:upper:]' '[:lower:]')
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-          # Login to ECR in this step
-          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
-
-          # Build Docker image
-          docker build -t $ECR_REGISTRY/$REPO:$IMAGE_TAG .
-
-          # Tag latest
-          docker tag $ECR_REGISTRY/$REPO:$IMAGE_TAG $ECR_REGISTRY/$REPO:latest
-
-          # Push both tags
-          docker push $ECR_REGISTRY/$REPO:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$REPO:latest
-
-      # 5️⃣ Deploy to EC2 via SSH
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.2.2
         env:
@@ -79,7 +66,6 @@ jobs:
             mkdir -p $APP_DIR
             cd $APP_DIR
 
-            # Clone or update repo
             if [ ! -d .git ]; then
               git clone https://github.com/${{ github.repository }} .
             else
@@ -87,13 +73,9 @@ jobs:
               git reset --hard origin/main
             fi
 
-            # Login to ECR
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # Create docker-compose.prod.yml
             cat > docker-compose.prod.yml <<EOF
-            version: '3.9'
-
             services:
               nginx:
                 build: ./nginx
@@ -156,10 +138,8 @@ jobs:
               notes-app-nw:
             EOF
 
-            # Pull, stop old containers, rebuild and start
             docker compose -f docker-compose.prod.yml down || true
             docker compose -f docker-compose.prod.yml pull django_app || true
             docker compose -f docker-compose.prod.yml up -d --build
 
-            # Clean unused images
             docker image prune -af
